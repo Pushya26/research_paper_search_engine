@@ -1,4 +1,4 @@
-# Mini Search Engine
+# Research-Paper Search Engine
 
 A **domain-specific search engine for research papers**, built from scratch in Python. Crawls real arXiv data, builds a custom inverted index (no Elasticsearch), ranks results with a **BM25 + PageRank hybrid**, and exposes a paginated REST API.
 
@@ -15,7 +15,7 @@ A **domain-specific search engine for research papers**, built from scratch in P
 | **Web Crawler** | Fetches paper metadata from the arXiv API with rate limiting and resumable ingest |
 | **Tokenizer** | Regex-based tokenization, stopword removal, optional stemming |
 | **Inverted Index** | Hand-rolled term dictionary + postings lists on disk |
-| **PageRank** | Citation/co-citation graph with power-iteration PageRank |
+| **PageRank** | Co-category similarity graph with power-iteration PageRank |
 | **Hybrid Ranker** | `score = α·BM25 + β·PageRank` with tunable weights |
 | **Query API** | FastAPI `/search` endpoint with page/size pagination |
 | **CLI** | `crawl`, `index`, `serve`, and `stats` commands |
@@ -37,15 +37,15 @@ A **domain-specific search engine for research papers**, built from scratch in P
 | Feature | Domain | Description | Endpoint |
 |---------|--------|-------------|----------|
 | **HTTP Connection Pooling** | Networking | Connection reuse, retry logic, latency tracking | N/A (crawler) |
-| **Boolean Query Compiler** | Compilers | Lexer → Parser → AST for queries like `A AND (B OR C)` | `/query/parse` |
+| **Boolean Query Parser** | Compilers | Lexer → Parser → AST → Evaluator for boolean queries | `/query/parse` |
 | **Trend Analysis** | Data Mining | Temporal frequency mining for emerging topics | `/analytics/trends` |
 | **Performance Metrics** | Systems Analysis | p50/p95/p99 latency, cache hit rates | `/metrics` |
 
-#### 1. Query Compiler (Compilers)
+#### 1. Query Parser & Evaluator (Compilers)
 
 **Module:** `src/query_compiler/`
 
-A complete compiler pipeline (lexer → parser → AST) for boolean search queries.
+A complete query pipeline (lexer → recursive-descent parser → AST → evaluator) for boolean search queries, with AST evaluation against the inverted index at query time.
 
 **Features:**
 - Lexer tokenizes queries into token stream (Phase 1)
@@ -74,7 +74,7 @@ curl "http://localhost:8001/query/parse?q=neural+AND+(network+OR+system)+NOT+sur
 ```
 
 **Resume Bullet:**
-> Designed and implemented a boolean query compiler: recursive-descent parser (lexer → tokenizer → AST) that compiles user queries like `neural AND network NOT survey` into optimized execution plans.
+> Built an AND/OR/NOT query parser (recursive-descent, lexer → AST) with an evaluator that executes boolean queries against the inverted index — AND intersects posting lists, OR unions them, NOT subtracts from the document universe.
 
 #### 2. HTTP Connection Pooling (Networking)
 
@@ -199,7 +199,7 @@ See [PLAN.md](./PLAN.md) for the full implementation plan, phase breakdown, data
 
 ```powershell
 git clone <your-repo-url>
-cd mini_search_engine
+cd research_paper_search_engine
 ```
 
 ### 2. Create and activate a virtual environment
@@ -313,7 +313,7 @@ curl "http://localhost:8001/similar/1706.03762?top_k=5"
 curl "http://localhost:8001/paper/1706.03762"
 ```
 
-**Parse boolean query (query compiler):**
+**Parse boolean query (query parser):**
 
 ```powershell
 curl "http://localhost:8001/query/parse?q=neural+AND+network+NOT+survey"
@@ -364,7 +364,7 @@ curl "http://localhost:8001/metrics"
 ## Project Structure
 
 ```
-mini_search_engine/
+research_paper_search_engine/
 ├── README.md                 # This file
 ├── PLAN.md                   # Detailed implementation plan
 ├── ENHANCEMENTS.md           # v0.2.0 features documentation
@@ -376,10 +376,10 @@ mini_search_engine/
 │   ├── crawler/              # arXiv data acquisition + network client
 │   ├── tokenizer/            # Text processing
 │   ├── index/                # Inverted index (from scratch)
-│   ├── graph/                # Citation graph + PageRank
+│   ├── graph/                # Graph (co-category or citation) + PageRank
 │   ├── ranker/               # BM25 + hybrid ranking
 │   ├── search/               # Query engine orchestration
-│   ├── query_compiler/       # Boolean query AST compiler
+│   ├── query_compiler/       # Boolean query parser + evaluator
 │   ├── analytics/            # Data mining (trends, co-occurrence)
 │   ├── metrics/              # Systems performance tracking
 │   ├── api/                  # FastAPI REST interface
@@ -462,7 +462,7 @@ Okapi BM25 scores lexical relevance with:
 
 ### PageRank
 
-A citation (or co-citation) graph connects papers. PageRank assigns authority scores via power iteration — papers referenced by many other papers score higher.
+A co-category graph connects papers that share 2+ arXiv categories (use `--real-citations` for Semantic Scholar citation data instead). PageRank assigns authority scores via power iteration — well-connected papers score higher.
 
 ### Hybrid Score
 
@@ -508,7 +508,7 @@ See [PLAN.md — Phase 7](./PLAN.md#phase-7--hosting--real-world-deployment) for
 - 5,838 research papers from arXiv (cs.AI, cs.CL, cs.LG, cs.IR)
 - 21,375 unique indexed terms
 - Average document length: 167.5 tokens
-- 50/50 tests passing (27 core + 23 advanced features)
+- 65 tests (62 pass, 3 skip without built index): 27 core + 23 advanced + 15 evaluator
 
 **Enhanced Features (v0.2.0):**
 - Query expansion with WordNet synonyms (+20-60% recall)
@@ -518,7 +518,7 @@ See [PLAN.md — Phase 7](./PLAN.md#phase-7--hosting--real-world-deployment) for
 - Enhanced metadata (categories, dates, citation counts)
 
 **Advanced Features (v0.3.0):**
-- Boolean query compiler (lexer → parser → AST)
+- Boolean query parser with AST evaluation against the index
 - HTTP connection pooling with retry logic
 - Data mining: trend analysis & co-occurrence mining
 - Systems metrics: p50/p95/p99 latency tracking
@@ -531,15 +531,15 @@ See [PLAN.md — Phase 7](./PLAN.md#phase-7--hosting--real-world-deployment) for
 **Designed and built a large-scale IR system from scratch over 5,838 arXiv papers** - on-disk inverted index (21,375 terms), BM25 + PageRank hybrid ranker, concurrent web crawler, paginated FastAPI; LRU caching delivers 25× query speedup (50ms to 2ms); 50/50 tests passing, zero external search infrastructure.
 
 ### Performance Optimizations
-**Diagnosed and resolved O(N²) citation-graph bottleneck via sparse semantic edge filtering** (2+ shared-category threshold), cutting edges by 99%+ (millions to thousands) and graph construction from hours to minutes on 5,838 nodes.
+**Diagnosed and resolved O(N²) co-category graph bottleneck via sparse semantic edge filtering** (2+ shared-category threshold), cutting edges by 99%+ (millions to thousands) and graph construction from hours to minutes on 5,838 nodes.
 
-**Refactored PageRank from O(N²) to O(E) per iteration via reverse-adjacency traversal**, achieving 292× speedup (34M to 116K ops); added WordNet query expansion (+20-60% recall) and Semantic Scholar real-citation integration.
+**Refactored PageRank from O(N²) to O(E) per iteration via reverse-adjacency traversal**, reducing operations 292× (34M → 116K per iteration); added WordNet query expansion (+20-60% recall) and Semantic Scholar real-citation integration.
 
 ### Advanced Features (Networking, Compilers, Data Mining, Systems)
 
 **Networking:** Implemented HTTP/1.1 connection pooling (httpx.AsyncClient, pool_size=10) with exponential-backoff retry logic in the arXiv crawler, tracking p50 request latency and reducing connection overhead across 10,000+ API calls.
 
-**Compilers:** Designed and implemented a boolean query compiler for the search engine: a recursive-descent parser (lexer → tokenizer → AST) that compiles user queries like `neural AND network NOT survey` into optimized execution plans evaluated against the inverted index.
+**Compilers:** Built an AND/OR/NOT boolean query parser (recursive-descent, lexer → AST) with an evaluator that executes parsed queries against the inverted index — AND intersects posting lists, OR unions them, NOT subtracts — feeding matched document sets into the BM25 + PageRank ranking pipeline.
 
 **Data Mining:** Applied data mining techniques (temporal trend analysis, association rule mining via co-occurrence frequencies) to identify emerging research topics across 5,838 arXiv papers, exposed via a `/analytics/trends` API endpoint.
 
@@ -551,7 +551,7 @@ See [PLAN.md — Phase 7](./PLAN.md#phase-7--hosting--real-world-deployment) for
 
 This section documents significant performance bottlenecks encountered during implementation and the algorithmic solutions applied.
 
-### Challenge 1: Citation Graph Construction Bottleneck
+### Challenge 1: Co-Category Graph Construction Bottleneck
 
 #### The Problem
 
@@ -559,7 +559,7 @@ This section documents significant performance bottlenecks encountered during im
 
 **Root Cause Analysis**:
 
-The initial co-citation graph implementation connected all papers within the same arXiv category:
+The initial co-category graph implementation connected all papers within the same arXiv category:
 
 ```python
 # Initial naive approach
@@ -591,7 +591,7 @@ for category, papers_in_category in category_index.items():
 **Implementation**:
 
 ```python
-# Optimized selective co-citation
+# Optimized selective co-category linking
 for i, paper1 in enumerate(papers):
     for paper2 in papers[i+1:]:
         # Only connect if papers share 2+ categories
@@ -724,7 +724,7 @@ if convergence_diff < tolerance:  # 1e-6
 **Practical Example** (5,838 nodes):
 - Before: 5,838² = 34,081,444 checks per iteration
 - After: ~20 × 5,838 = 116,760 checks per iteration
-- Speedup: **~292x per iteration**
+- Reduction: **~292× fewer operations per iteration**
 
 **Convergence Behavior**:
 - Typical convergence: 20-30 iterations (diff < 1e-6)

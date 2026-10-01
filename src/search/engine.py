@@ -3,6 +3,8 @@ from pathlib import Path
 from src.tokenizer.tokenizer import Tokenizer
 from src.index.inverted_index import InvertedIndex
 from src.ranker.hybrid import HybridRanker
+from src.query_compiler.parser import compile_query
+from src.query_compiler.evaluator import evaluate, extract_terms, has_boolean_operators
 
 class SearchEngine:
     def __init__(self, data_dir: Path, alpha: float = 0.7, beta: float = 0.3):
@@ -20,20 +22,60 @@ class SearchEngine:
         import time
         start = time.time()
         
-        query_terms = self.tokenizer.tokenize(query)
-        
-        if not query_terms:
-            return {
-                "query": query,
-                "total_hits": 0,
-                "page": page,
-                "size": size,
-                "total_pages": 0,
-                "results": [],
-                "took_ms": int((time.time() - start) * 1000)
-            }
-        
-        ranked_results = self.ranker.rank(self.index, query_terms, self.pagerank_scores)
+        # Boolean query path: parse → evaluate AST → rank filtered candidates
+        if has_boolean_operators(query):
+            try:
+                ast = compile_query(query)
+                candidate_ids = evaluate(ast, self.index, self.tokenizer)
+                raw_terms = extract_terms(ast)
+                query_terms = []
+                for t in raw_terms:
+                    query_terms.extend(self.tokenizer.tokenize(t))
+                
+                if not query_terms or not candidate_ids:
+                    return {
+                        "query": query,
+                        "total_hits": 0,
+                        "page": page,
+                        "size": size,
+                        "total_pages": 0,
+                        "results": [],
+                        "took_ms": int((time.time() - start) * 1000)
+                    }
+                
+                ranked_results = self.ranker.rank_candidates(
+                    self.index, query_terms, candidate_ids, self.pagerank_scores
+                )
+            except SyntaxError:
+                # Fall back to plain search on parse error
+                query_terms = self.tokenizer.tokenize(query)
+                if not query_terms:
+                    return {
+                        "query": query,
+                        "total_hits": 0,
+                        "page": page,
+                        "size": size,
+                        "total_pages": 0,
+                        "results": [],
+                        "took_ms": int((time.time() - start) * 1000)
+                    }
+                ranked_results = self.ranker.rank(self.index, query_terms, self.pagerank_scores)
+        else:
+            # Plain search path
+            query_terms = self.tokenizer.tokenize(query)
+            
+            if not query_terms:
+                return {
+                    "query": query,
+                    "total_hits": 0,
+                    "page": page,
+                    "size": size,
+                    "total_pages": 0,
+                    "results": [],
+                    "took_ms": int((time.time() - start) * 1000)
+                }
+            
+            ranked_results = self.ranker.rank(self.index, query_terms, self.pagerank_scores)
         
         total_hits = len(ranked_results)
         total_pages = (total_hits + size - 1) // size

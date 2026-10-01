@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .enhanced_routes import router
 
 app = FastAPI(
-    title="Mini Search Engine - Enhanced",
+    title="Research-Paper Search Engine - Enhanced",
     description="""
     A domain-specific search engine for research papers with advanced features:
     
